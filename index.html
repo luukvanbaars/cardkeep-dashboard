@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CardKeep Dashboard</title>
+    <link rel="icon" type="image/png" href="favicon.png">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+            background: #0a0a0a;
+            color: #e5e5e5;
+            min-height: 100vh;
+            padding: 40px 24px;
+        }
+
+        .header {
+            max-width: 1200px;
+            margin: 0 auto 40px;
+        }
+
+        .header h1 {
+            font-size: 32px;
+            font-weight: 700;
+            color: #fff;
+            letter-spacing: -0.5px;
+        }
+
+        .header h1 span { color: #ED9B61; }
+
+        .header p {
+            color: #888;
+            margin-top: 6px;
+            font-size: 14px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            max-width: 1200px;
+            margin: 0 auto 32px;
+        }
+
+        .stat-card {
+            background: #161616;
+            border: 1px solid #222;
+            border-radius: 16px;
+            padding: 24px;
+            transition: border-color 0.2s;
+        }
+
+        .stat-card:hover { border-color: #ED9B61; }
+
+        .stat-label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #666;
+            margin-bottom: 8px;
+        }
+
+        .stat-value {
+            font-size: 36px;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .stat-sub {
+            font-size: 13px;
+            color: #555;
+            margin-top: 4px;
+        }
+
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+            gap: 16px;
+            max-width: 1200px;
+            margin: 0 auto 32px;
+        }
+
+        .chart-card {
+            background: #161616;
+            border: 1px solid #222;
+            border-radius: 16px;
+            padding: 24px;
+        }
+
+        .chart-card h3 {
+            font-size: 14px;
+            color: #888;
+            margin-bottom: 20px;
+            font-weight: 500;
+        }
+
+        /* Bar chart */
+        .bar-chart { display: flex; flex-direction: column; gap: 10px; }
+
+        .bar-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .bar-label {
+            width: 90px;
+            font-size: 13px;
+            color: #aaa;
+            text-align: right;
+            flex-shrink: 0;
+        }
+
+        .bar-track {
+            flex: 1;
+            height: 28px;
+            background: #1a1a1a;
+            border-radius: 6px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .bar-fill {
+            height: 100%;
+            border-radius: 6px;
+            transition: width 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+            min-width: 2px;
+        }
+
+        .bar-count {
+            width: 36px;
+            font-size: 13px;
+            color: #666;
+            text-align: left;
+            flex-shrink: 0;
+        }
+
+        /* Donut chart */
+        .donut-container {
+            display: flex;
+            align-items: center;
+            gap: 32px;
+        }
+
+        .donut-svg { flex-shrink: 0; }
+
+        .donut-legend { display: flex; flex-direction: column; gap: 8px; }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: #aaa;
+        }
+
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .legend-count {
+            color: #555;
+            margin-left: auto;
+            padding-left: 12px;
+        }
+
+        /* Timeline */
+        .timeline-chart {
+            display: flex;
+            align-items: flex-end;
+            gap: 4px;
+            height: 120px;
+            padding-top: 8px;
+        }
+
+        .timeline-bar-wrapper {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100%;
+            justify-content: flex-end;
+        }
+
+        .timeline-bar {
+            width: 100%;
+            max-width: 32px;
+            background: #ED9B61;
+            border-radius: 4px 4px 0 0;
+            transition: height 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+            min-height: 2px;
+        }
+
+        .timeline-label {
+            font-size: 10px;
+            color: #555;
+            margin-top: 6px;
+            text-align: center;
+        }
+
+        /* Recent table */
+        .table-card {
+            background: #161616;
+            border: 1px solid #222;
+            border-radius: 16px;
+            padding: 24px;
+            max-width: 1200px;
+            margin: 0 auto;
+            overflow-x: auto;
+        }
+
+        .table-card h3 {
+            font-size: 14px;
+            color: #888;
+            margin-bottom: 16px;
+            font-weight: 500;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th {
+            text-align: left;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #555;
+            padding: 8px 12px;
+            border-bottom: 1px solid #222;
+        }
+
+        td {
+            padding: 10px 12px;
+            font-size: 13px;
+            color: #aaa;
+            border-bottom: 1px solid #1a1a1a;
+        }
+
+        tr:hover td { color: #ddd; }
+
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .badge-vertical { background: #1a2a1a; color: #6bba6b; }
+        .badge-horizontal { background: #1a1a2a; color: #6b8bba; }
+        .badge-postcard { background: #2a1a2a; color: #ba6bba; }
+        .badge-diecut { background: #2a2218; color: #ED9B61; }
+
+        .loading {
+            text-align: center;
+            padding: 80px 0;
+            color: #555;
+            font-size: 15px;
+        }
+
+        .loading::after {
+            content: '';
+            animation: dots 1.5s infinite;
+        }
+
+        @keyframes dots {
+            0%, 20% { content: ''; }
+            40% { content: '.'; }
+            60% { content: '..'; }
+            80%, 100% { content: '...'; }
+        }
+
+        .refresh-btn {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            color: #888;
+            padding: 6px 14px;
+            border-radius: 8px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .refresh-btn:hover {
+            border-color: #ED9B61;
+            color: #ED9B61;
+        }
+
+        .header-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-row">
+            <div style="display:flex;align-items:center;gap:16px">
+                <img src="favicon.png" alt="CardKeep" style="width:48px;height:48px;border-radius:12px">
+                <div>
+                    <h1>Card<span>Keep</span> Dashboard</h1>
+                    <p id="subtitle">Loading...</p>
+                </div>
+            </div>
+            <button class="refresh-btn" onclick="fetchData()">Refresh</button>
+        </div>
+    </div>
+
+    <div id="content">
+        <div class="loading">Loading data</div>
+    </div>
+
+    <script>
+        const ENDPOINT = 'https://script.google.com/macros/s/AKfycbxB7YD_JPm1_iKDFXAMKojC8M_MCFqmzO0kVn8RIB0EOvXG4j5mTbev5FurUTb6L3hW9A/exec';
+
+        async function fetchData() {
+            try {
+                const res = await fetch(ENDPOINT);
+                const json = await res.json();
+                // New script returns funnelSummary; old script doesn't.
+                // Pass it through opportunistically so the funnel section
+                // just disappears when there's no data to render.
+                if (json.status === 'ok' && json.rows.length > 1) {
+                    renderDashboard(json.rows, json.funnelSummary || null);
+                } else {
+                    document.getElementById('content').innerHTML = '<div class="loading">No data yet — scan some cards!</div>';
+                    document.getElementById('subtitle').textContent = 'No captures recorded';
+                }
+            } catch (err) {
+                document.getElementById('content').innerHTML = `<div class="loading">Error loading data: ${err.message}</div>`;
+            }
+        }
+
+        const INTERNAL_DEVICES = new Set([
+            '103DF45F-718F-475C-A0AF-BC0D50CD4ECB',
+            '693AEA1A-4BAE-46A9-B3E3-FC9FA2C202A3'
+        ]);
+
+        function renderDashboard(rows, funnelSummary) {
+            const headers = rows[0];
+            const allData = rows.slice(1).map(row => {
+                const obj = {};
+                headers.forEach((h, i) => obj[h] = row[i]);
+                return obj;
+            });
+
+            // Split: filtered data for charts/stats, all data for table
+            const data = allData.filter(d => !INTERNAL_DEVICES.has(d['Device ID']));
+            const tableData = allData;
+
+            // Stats
+            const total = data.length;
+            const devices = new Set(data.map(d => d['Device ID'])).size;
+            const dieCuts = data.filter(d => d['Is Die Cut'] === true || d['Is Die Cut'] === 'TRUE').length;
+            const withFrom = data.filter(d => d['Has From Person'] === true || d['Has From Person'] === 'TRUE').length;
+
+            // Card types
+            const types = {};
+            data.forEach(d => {
+                const t = d['Card Type'] || 'unknown';
+                types[t] = (types[t] || 0) + 1;
+            });
+
+            // Categories
+            const categories = {};
+            data.forEach(d => {
+                const c = d['Category'] || 'Uncategorized';
+                if (c) categories[c] = (categories[c] || 0) + 1;
+            });
+
+            // Timeline (by day)
+            const byDay = {};
+            data.forEach(d => {
+                const date = d['Timestamp'] ? d['Timestamp'].split('T')[0] : 'unknown';
+                byDay[date] = (byDay[date] || 0) + 1;
+            });
+            const sortedDays = Object.keys(byDay).sort();
+            // Show last 14 days max
+            const recentDays = sortedDays.slice(-14);
+
+            // Device models
+            const models = {};
+            data.forEach(d => {
+                const m = d['Device Model'] || 'unknown';
+                models[m] = (models[m] || 0) + 1;
+            });
+
+            const typeColors = {
+                vertical: '#6bba6b',
+                horizontal: '#6b8bba',
+                postcard: '#ba6bba'
+            };
+
+            const catColors = ['#ED9B61', '#6bba6b', '#6b8bba', '#ba6bba', '#ba6b6b', '#6bbaba', '#baba6b', '#9b6bba'];
+
+            document.getElementById('subtitle').textContent = `${total} cards captured across ${devices} device${devices !== 1 ? 's' : ''}`;
+
+            let html = '';
+
+            // Stat cards
+            html += '<div class="stats-grid">';
+            html += statCard('Total Cards', total, 'All time');
+            html += statCard('Devices', devices, 'Unique');
+            html += statCard('Die-Cut', dieCuts, `${total ? Math.round(dieCuts/total*100) : 0}% of total`);
+            html += statCard('With Sender', withFrom, `${total ? Math.round(withFrom/total*100) : 0}% tagged`);
+            html += '</div>';
+
+            // Funnel section (only if the new Apps Script has served data)
+            if (funnelSummary && funnelSummary.perStep) {
+                html += renderFunnelSection(funnelSummary);
+            }
+
+            // Charts
+            html += '<div class="charts-grid">';
+
+            // Card type donut
+            html += '<div class="chart-card">';
+            html += '<h3>Card Types</h3>';
+            html += renderDonut(types, typeColors);
+            html += '</div>';
+
+            // Categories bar chart
+            html += '<div class="chart-card">';
+            html += '<h3>Categories</h3>';
+            const sortedCats = Object.entries(categories).sort((a, b) => b[1] - a[1]);
+            const maxCat = sortedCats.length ? sortedCats[0][1] : 1;
+            html += '<div class="bar-chart">';
+            sortedCats.forEach(([name, count], i) => {
+                const pct = (count / maxCat * 100).toFixed(1);
+                const color = catColors[i % catColors.length];
+                html += `<div class="bar-row">
+                    <div class="bar-label">${name}</div>
+                    <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${color}"></div></div>
+                    <div class="bar-count">${count}</div>
+                </div>`;
+            });
+            html += '</div></div>';
+
+            // Devices
+            html += '<div class="chart-card">';
+            html += '<h3>Device Models</h3>';
+            // Map internal model IDs to friendly names and merge duplicates
+            const friendlyModels = {};
+            Object.entries(models).forEach(([model, count]) => {
+                const name = deviceName(model);
+                friendlyModels[name] = (friendlyModels[name] || 0) + count;
+            });
+            const sortedModels = Object.entries(friendlyModels).sort((a, b) => b[1] - a[1]);
+            const maxModel = sortedModels.length ? sortedModels[0][1] : 1;
+            html += '<div class="bar-chart">';
+            sortedModels.forEach(([name, count]) => {
+                const pct = (count / maxModel * 100).toFixed(1);
+                html += `<div class="bar-row">
+                    <div class="bar-label" style="width:120px">${name}</div>
+                    <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:#ED9B61"></div></div>
+                    <div class="bar-count">${count}</div>
+                </div>`;
+            });
+            html += '</div></div>';
+
+            html += '</div>';
+
+            // Timeline — full width
+            html += '<div class="chart-card" style="max-width:1200px;margin:0 auto 32px">';
+            html += '<h3>Captures Over Time</h3>';
+            const maxDay = Math.max(...recentDays.map(d => byDay[d]));
+            html += '<div class="timeline-chart">';
+            recentDays.forEach(day => {
+                const count = byDay[day];
+                const pct = (count / maxDay * 100).toFixed(1);
+                const label = day.slice(5); // MM-DD
+                html += `<div class="timeline-bar-wrapper">
+                    <div class="timeline-bar" style="height:${pct}%" title="${day}: ${count} cards"></div>
+                    <div class="timeline-label">${label}</div>
+                </div>`;
+            });
+            html += '</div></div>';
+
+            // Recent captures table
+            html += '<div class="table-card">';
+            html += '<h3>Recent Captures</h3>';
+            html += '<table><thead><tr>';
+            html += '<th>Time</th><th>Type</th><th>Category</th><th>Die-Cut</th><th>From</th><th>Device</th><th>Version</th>';
+            html += '</tr></thead><tbody>';
+
+            const recent = [...tableData].reverse().slice(0, 30);
+            recent.forEach(d => {
+                const isInternal = INTERNAL_DEVICES.has(d['Device ID']);
+                const time = d['Timestamp'] ? formatTime(new Date(d['Timestamp'])) : '—';
+                const type = d['Card Type'] || '—';
+                const typeBadge = `badge-${type}`;
+                const cat = d['Category'] || '—';
+                const diecut = (d['Is Die Cut'] === true || d['Is Die Cut'] === 'TRUE') ? '<span class="badge badge-diecut">Die-Cut</span>' : '—';
+                const from = (d['Has From Person'] === true || d['Has From Person'] === 'TRUE') ? 'Yes' : '—';
+                const device = deviceName(d['Device Model'] || '') || '—';
+                const version = d['App Version'] || '—';
+                const internalBadge = isInternal ? ' <span class="badge" style="background:#1a1a2a;color:#6b8bba">INTERNAL</span>' : '';
+                const rowStyle = isInternal ? ' style="opacity:0.5"' : '';
+
+                html += `<tr${rowStyle}>
+                    <td>${time}${internalBadge}</td>
+                    <td><span class="badge ${typeBadge}">${type}</span></td>
+                    <td>${cat}</td>
+                    <td>${diecut}</td>
+                    <td>${from}</td>
+                    <td>${device}</td>
+                    <td>${version}</td>
+                </tr>`;
+            });
+
+            html += '</tbody></table></div>';
+
+            document.getElementById('content').innerHTML = html;
+        }
+
+        function formatTime(date) {
+            const now = new Date();
+            const diff = now - date;
+            const mins = Math.floor(diff / 60000);
+            const hours = Math.floor(diff / 3600000);
+            const days = Math.floor(diff / 86400000);
+
+            let relative;
+            if (mins < 1) relative = 'Just now';
+            else if (mins < 60) relative = `${mins}m ago`;
+            else if (hours < 24) relative = `${hours}h ago`;
+            else if (days === 1) relative = 'Yesterday';
+            else if (days < 7) relative = `${days}d ago`;
+            else relative = null;
+
+            const timeStr = date.toLocaleString(undefined, {
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true
+            });
+
+            return relative ? `${relative} <span style="color:#555">${timeStr}</span>` : timeStr;
+        }
+
+        function statCard(label, value, sub) {
+            return `<div class="stat-card">
+                <div class="stat-label">${label}</div>
+                <div class="stat-value">${value}</div>
+                <div class="stat-sub">${sub}</div>
+            </div>`;
+        }
+
+        // Renders the scan-funnel section: one bar per step scaled to the
+        // number of sessions that started, plus a drop-off chart showing where
+        // abandoners bailed. The step order matches AnalyticsService.FunnelStep
+        // in the iOS app.
+        function renderFunnelSection(summary) {
+            const stepOrder = [
+                { key: 'started', label: 'Started' },
+                { key: 'typeChosen', label: 'Type chosen' },
+                { key: 'outsideScanned', label: 'Outside scanned' },
+                { key: 'previewReached', label: 'Preview reached' },
+                { key: 'categorizeReached', label: 'Categorize' },
+                { key: 'saved', label: 'Saved' }
+            ];
+
+            const perStep = summary.perStep || {};
+            const abandonedAt = summary.abandonedAt || {};
+            const started = perStep.started || 0;
+
+            if (started === 0) return '';
+
+            let html = '<div class="charts-grid" style="grid-template-columns:1fr 1fr">';
+
+            // Left: the funnel itself
+            html += '<div class="chart-card">';
+            html += `<h3>Scan Funnel — ${started} session${started === 1 ? '' : 's'}</h3>`;
+            html += '<div class="bar-chart">';
+            let prevCount = started;
+            stepOrder.forEach((s, i) => {
+                const count = perStep[s.key] || 0;
+                const pctOfStart = started ? (count / started * 100) : 0;
+                const dropFromPrev = prevCount ? ((prevCount - count) / prevCount * 100) : 0;
+                // Color fades from brand orange to a deeper tone as the
+                // funnel narrows — makes the drop-off visually obvious.
+                const color = i === 0 ? '#ED9B61' : (count === 0 ? '#3a3a3a' : '#ED9B61');
+                const dropLabel = i === 0 ? '' :
+                    `<span style="color:#666"> · −${dropFromPrev.toFixed(0)}%</span>`;
+                html += `<div class="bar-row">
+                    <div class="bar-label" style="width:120px">${s.label}</div>
+                    <div class="bar-track">
+                        <div class="bar-fill" style="width:${pctOfStart.toFixed(1)}%;background:${color};opacity:${0.4 + (pctOfStart/200)}"></div>
+                    </div>
+                    <div class="bar-count" style="width:90px">${count} <span style="color:#555">(${pctOfStart.toFixed(0)}%)</span>${dropLabel}</div>
+                </div>`;
+                prevCount = count;
+            });
+            html += '</div>';
+
+            // Overall conversion rate
+            const saved = perStep.saved || 0;
+            const overall = started ? (saved / started * 100) : 0;
+            html += `<div style="margin-top:20px;padding-top:16px;border-top:1px solid #222;display:flex;justify-content:space-between;align-items:baseline">
+                <span style="font-size:12px;color:#666;text-transform:uppercase;letter-spacing:1px">Overall completion</span>
+                <span style="font-size:24px;font-weight:700;color:#fff">${overall.toFixed(1)}%</span>
+            </div>`;
+            html += '</div>';
+
+            // Right: drop-off chart — where abandoners bailed
+            html += '<div class="chart-card">';
+            const totalAbandoned = Object.values(abandonedAt).reduce((s, n) => s + n, 0);
+            html += `<h3>Where Users Drop Off — ${totalAbandoned} abandoned</h3>`;
+
+            if (totalAbandoned === 0) {
+                html += '<div style="color:#555;font-size:13px;padding:12px 0">No abandoned sessions yet.</div>';
+            } else {
+                html += '<div class="bar-chart">';
+                const dropOrder = stepOrder.slice(0, -1); // can't abandon from "saved"
+                const maxDrop = Math.max(...dropOrder.map(s => abandonedAt[s.key] || 0), 1);
+                dropOrder.forEach(s => {
+                    const count = abandonedAt[s.key] || 0;
+                    const pct = (count / maxDrop * 100).toFixed(1);
+                    const shareOfAbandoned = totalAbandoned ? (count / totalAbandoned * 100) : 0;
+                    html += `<div class="bar-row">
+                        <div class="bar-label" style="width:120px">At ${s.label}</div>
+                        <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:#ba6b6b"></div></div>
+                        <div class="bar-count" style="width:70px">${count} <span style="color:#555">(${shareOfAbandoned.toFixed(0)}%)</span></div>
+                    </div>`;
+                });
+                html += '</div>';
+            }
+            html += '</div>';
+
+            html += '</div>'; // charts-grid
+
+            return html;
+        }
+
+        function renderDonut(data, colorMap) {
+            const entries = Object.entries(data).sort((a, b) => b[1] - a[1]);
+            const total = entries.reduce((s, e) => s + e[1], 0);
+            const defaultColors = ['#ED9B61', '#6bba6b', '#6b8bba', '#ba6bba'];
+
+            const size = 120;
+            const cx = size / 2, cy = size / 2, r = 44, stroke = 14;
+            const circumference = 2 * Math.PI * r;
+
+            let offset = 0;
+            let arcs = '';
+            let legend = '';
+
+            entries.forEach(([name, count], i) => {
+                const color = colorMap[name] || defaultColors[i % defaultColors.length];
+                const pct = count / total;
+                const dashLen = pct * circumference;
+                const gap = circumference - dashLen;
+
+                arcs += `<circle cx="${cx}" cy="${cy}" r="${r}"
+                    fill="none" stroke="${color}" stroke-width="${stroke}"
+                    stroke-dasharray="${dashLen} ${gap}"
+                    stroke-dashoffset="${-offset}"
+                    transform="rotate(-90 ${cx} ${cy})" />`;
+
+                offset += dashLen;
+
+                legend += `<div class="legend-item">
+                    <div class="legend-dot" style="background:${color}"></div>
+                    ${name}
+                    <span class="legend-count">${count} (${Math.round(pct*100)}%)</span>
+                </div>`;
+            });
+
+            // Center text
+            arcs += `<text x="${cx}" y="${cy}" text-anchor="middle" dy="0.35em"
+                fill="#fff" font-size="20" font-weight="700">${total}</text>`;
+
+            return `<div class="donut-container">
+                <svg class="donut-svg" width="${size}" height="${size}">${arcs}</svg>
+                <div class="donut-legend">${legend}</div>
+            </div>`;
+        }
+
+        const DEVICE_NAMES = {
+            // iPhone
+            'iPhone8,1': 'iPhone 6s', 'iPhone8,2': 'iPhone 6s Plus', 'iPhone8,4': 'iPhone SE',
+            'iPhone9,1': 'iPhone 7', 'iPhone9,3': 'iPhone 7', 'iPhone9,2': 'iPhone 7 Plus', 'iPhone9,4': 'iPhone 7 Plus',
+            'iPhone10,1': 'iPhone 8', 'iPhone10,4': 'iPhone 8', 'iPhone10,2': 'iPhone 8 Plus', 'iPhone10,5': 'iPhone 8 Plus',
+            'iPhone10,3': 'iPhone X', 'iPhone10,6': 'iPhone X',
+            'iPhone11,2': 'iPhone XS', 'iPhone11,4': 'iPhone XS Max', 'iPhone11,6': 'iPhone XS Max', 'iPhone11,8': 'iPhone XR',
+            'iPhone12,1': 'iPhone 11', 'iPhone12,3': 'iPhone 11 Pro', 'iPhone12,5': 'iPhone 11 Pro Max', 'iPhone12,8': 'iPhone SE (2nd)',
+            'iPhone13,1': 'iPhone 12 mini', 'iPhone13,2': 'iPhone 12', 'iPhone13,3': 'iPhone 12 Pro', 'iPhone13,4': 'iPhone 12 Pro Max',
+            'iPhone14,2': 'iPhone 13 Pro', 'iPhone14,3': 'iPhone 13 Pro Max', 'iPhone14,4': 'iPhone 13 mini', 'iPhone14,5': 'iPhone 13',
+            'iPhone14,6': 'iPhone SE (3rd)', 'iPhone14,7': 'iPhone 14', 'iPhone14,8': 'iPhone 14 Plus',
+            'iPhone15,2': 'iPhone 14 Pro', 'iPhone15,3': 'iPhone 14 Pro Max', 'iPhone15,4': 'iPhone 15', 'iPhone15,5': 'iPhone 15 Plus',
+            'iPhone16,1': 'iPhone 15 Pro', 'iPhone16,2': 'iPhone 15 Pro Max',
+            'iPhone17,1': 'iPhone 16 Pro', 'iPhone17,2': 'iPhone 16 Pro Max', 'iPhone17,3': 'iPhone 16', 'iPhone17,4': 'iPhone 16 Plus',
+            'iPhone17,5': 'iPhone 16e',
+            'iPhone18,1': 'iPhone 17 Pro', 'iPhone18,2': 'iPhone 17 Pro Max',
+            'iPhone18,3': 'iPhone 17', 'iPhone18,4': 'iPhone 17 Plus',
+            'iPhone18,5': 'iPhone 17 Air', 'iPhone18,6': 'iPhone 17e',
+            // iPad
+            'iPad6,3': 'iPad Pro 9.7"', 'iPad6,4': 'iPad Pro 9.7"', 'iPad6,7': 'iPad Pro 12.9"', 'iPad6,8': 'iPad Pro 12.9"',
+            'iPad6,11': 'iPad (5th)', 'iPad6,12': 'iPad (5th)',
+            'iPad7,1': 'iPad Pro 12.9" (2nd)', 'iPad7,2': 'iPad Pro 12.9" (2nd)', 'iPad7,3': 'iPad Pro 10.5"', 'iPad7,4': 'iPad Pro 10.5"',
+            'iPad7,5': 'iPad (6th)', 'iPad7,6': 'iPad (6th)', 'iPad7,11': 'iPad (7th)', 'iPad7,12': 'iPad (7th)',
+            'iPad8,1': 'iPad Pro 11"', 'iPad8,2': 'iPad Pro 11"', 'iPad8,3': 'iPad Pro 11"', 'iPad8,4': 'iPad Pro 11"',
+            'iPad8,5': 'iPad Pro 12.9" (3rd)', 'iPad8,6': 'iPad Pro 12.9" (3rd)', 'iPad8,7': 'iPad Pro 12.9" (3rd)', 'iPad8,8': 'iPad Pro 12.9" (3rd)',
+            'iPad8,9': 'iPad Pro 11" (2nd)', 'iPad8,10': 'iPad Pro 11" (2nd)', 'iPad8,11': 'iPad Pro 12.9" (4th)', 'iPad8,12': 'iPad Pro 12.9" (4th)',
+            'iPad11,1': 'iPad mini (5th)', 'iPad11,2': 'iPad mini (5th)', 'iPad11,3': 'iPad Air (3rd)', 'iPad11,4': 'iPad Air (3rd)',
+            'iPad11,6': 'iPad (8th)', 'iPad11,7': 'iPad (8th)',
+            'iPad12,1': 'iPad (9th)', 'iPad12,2': 'iPad (9th)',
+            'iPad13,1': 'iPad Air (4th)', 'iPad13,2': 'iPad Air (4th)',
+            'iPad13,4': 'iPad Pro 11" (3rd)', 'iPad13,5': 'iPad Pro 11" (3rd)', 'iPad13,6': 'iPad Pro 11" (3rd)', 'iPad13,7': 'iPad Pro 11" (3rd)',
+            'iPad13,8': 'iPad Pro 12.9" (5th)', 'iPad13,9': 'iPad Pro 12.9" (5th)', 'iPad13,10': 'iPad Pro 12.9" (5th)', 'iPad13,11': 'iPad Pro 12.9" (5th)',
+            'iPad13,16': 'iPad Air (5th)', 'iPad13,17': 'iPad Air (5th)', 'iPad13,18': 'iPad (10th)', 'iPad13,19': 'iPad (10th)',
+            'iPad14,1': 'iPad mini (6th)', 'iPad14,2': 'iPad mini (6th)',
+            'iPad14,3': 'iPad Pro 11" (4th)', 'iPad14,4': 'iPad Pro 11" (4th)', 'iPad14,5': 'iPad Pro 12.9" (6th)', 'iPad14,6': 'iPad Pro 12.9" (6th)',
+            'iPad14,8': 'iPad Air 11" (M2)', 'iPad14,9': 'iPad Air 11" (M2)', 'iPad14,10': 'iPad Air 13" (M2)', 'iPad14,11': 'iPad Air 13" (M2)',
+            'iPad16,1': 'iPad mini (A17 Pro)', 'iPad16,2': 'iPad mini (A17 Pro)',
+            'iPad16,3': 'iPad Pro 11" (M4)', 'iPad16,4': 'iPad Pro 11" (M4)', 'iPad16,5': 'iPad Pro 13" (M4)', 'iPad16,6': 'iPad Pro 13" (M4)',
+            // Mac (for Catalyst / Designed for iPad)
+            'arm64': 'Mac (Apple Silicon)',
+        };
+
+        function deviceName(model) {
+            return DEVICE_NAMES[model] || model;
+        }
+
+        // Load on start
+        fetchData();
+    </script>
+</body>
+</html>
