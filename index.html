@@ -353,34 +353,39 @@
             });
 
             // Split: filtered data for charts/stats, all data for table
-            const data = allData.filter(d => !INTERNAL_DEVICES.has(d['Device ID']));
+            const data = allData.filter(d => !INTERNAL_DEVICES.has(d['deviceId']));
             const tableData = allData;
 
             // Stats
             const total = data.length;
-            const devices = new Set(data.map(d => d['Device ID'])).size;
-            const dieCuts = data.filter(d => d['Is Die Cut'] === true || d['Is Die Cut'] === 'TRUE').length;
-            const withFrom = data.filter(d => d['Has From Person'] === true || d['Has From Person'] === 'TRUE').length;
+            const devices = new Set(data.map(d => d['deviceId'])).size;
+            const dieCuts = data.filter(d => d['isDieCut'] === true || d['isDieCut'] === 'TRUE').length;
+            const withFrom = data.filter(d => d['hasFromPerson'] === true || d['hasFromPerson'] === 'TRUE').length;
 
             // Card types
             const types = {};
             data.forEach(d => {
-                const t = d['Card Type'] || 'unknown';
+                const t = d['cardType'] || 'unknown';
                 types[t] = (types[t] || 0) + 1;
             });
 
             // Categories
             const categories = {};
             data.forEach(d => {
-                const c = d['Category'] || 'Uncategorized';
+                const c = d['category'] || 'Uncategorized';
                 if (c) categories[c] = (categories[c] || 0) + 1;
             });
 
             // Timeline (by day)
             const byDay = {};
             data.forEach(d => {
-                const date = d['Timestamp'] ? d['Timestamp'].split('T')[0] : 'unknown';
-                byDay[date] = (byDay[date] || 0) + 1;
+                const ts = d['timestamp'];
+                // Apps Script serializes Date cells as ISO strings, but sheets
+                // may also return them as Date objects. Normalize both.
+                const dayStr = ts instanceof Date
+                    ? ts.toISOString().split('T')[0]
+                    : (typeof ts === 'string' ? ts.split('T')[0] : 'unknown');
+                byDay[dayStr] = (byDay[dayStr] || 0) + 1;
             });
             const sortedDays = Object.keys(byDay).sort();
             // Show last 14 days max
@@ -389,7 +394,7 @@
             // Device models
             const models = {};
             data.forEach(d => {
-                const m = d['Device Model'] || 'unknown';
+                const m = d['deviceModel'] || 'unknown';
                 models[m] = (models[m] || 0) + 1;
             });
 
@@ -493,15 +498,16 @@
 
             const recent = [...tableData].reverse().slice(0, 30);
             recent.forEach(d => {
-                const isInternal = INTERNAL_DEVICES.has(d['Device ID']);
-                const time = d['Timestamp'] ? formatTime(new Date(d['Timestamp'])) : '—';
-                const type = d['Card Type'] || '—';
+                const isInternal = INTERNAL_DEVICES.has(d['deviceId']);
+                const ts = d['timestamp'];
+                const time = ts ? formatTime(ts instanceof Date ? ts : new Date(ts)) : '—';
+                const type = d['cardType'] || '—';
                 const typeBadge = `badge-${type}`;
-                const cat = d['Category'] || '—';
-                const diecut = (d['Is Die Cut'] === true || d['Is Die Cut'] === 'TRUE') ? '<span class="badge badge-diecut">Die-Cut</span>' : '—';
-                const from = (d['Has From Person'] === true || d['Has From Person'] === 'TRUE') ? 'Yes' : '—';
-                const device = deviceName(d['Device Model'] || '') || '—';
-                const version = d['App Version'] || '—';
+                const cat = d['category'] || '—';
+                const diecut = (d['isDieCut'] === true || d['isDieCut'] === 'TRUE') ? '<span class="badge badge-diecut">Die-Cut</span>' : '—';
+                const from = (d['hasFromPerson'] === true || d['hasFromPerson'] === 'TRUE') ? 'Yes' : '—';
+                const device = deviceName(d['deviceModel'] || '') || '—';
+                const version = d['appVersion'] || '—';
                 const internalBadge = isInternal ? ' <span class="badge" style="background:#1a1a2a;color:#6b8bba">INTERNAL</span>' : '';
                 const rowStyle = isInternal ? ' style="opacity:0.5"' : '';
 
