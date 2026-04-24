@@ -356,19 +356,21 @@
         // Cached response so toggling "Show internal" re-renders without a
         // second network round-trip.
         let cachedRows = null;
+        let cachedFunnelRows = null;
         let cachedFunnelSummary = null;
 
         async function fetchData() {
             try {
                 const res = await fetch(ENDPOINT);
                 const json = await res.json();
-                // New script returns funnelSummary; old script doesn't.
-                // Pass it through opportunistically so the funnel section
-                // just disappears when there's no data to render.
+                // New script returns funnelRows + funnelSummary; old script
+                // returns neither. funnelRows is what lets us recompute the
+                // summary client-side when the internal toggle flips.
                 if (json.status === 'ok' && json.rows.length > 1) {
                     cachedRows = json.rows;
+                    cachedFunnelRows = json.funnelRows || null;
                     cachedFunnelSummary = json.funnelSummary || null;
-                    renderDashboard(cachedRows, cachedFunnelSummary);
+                    renderDashboard(cachedRows, cachedFunnelRows, cachedFunnelSummary);
                 } else {
                     document.getElementById('content').innerHTML = '<div class="loading">No data yet — scan some cards!</div>';
                     document.getElementById('subtitle').textContent = 'No captures recorded';
@@ -376,6 +378,33 @@
             } catch (err) {
                 document.getElementById('content').innerHTML = `<div class="loading">Error loading data: ${err.message}</div>`;
             }
+        }
+
+        // Client-side mirror of the Apps Script's summarizeFunnel(), with an
+        // extra deviceId filter so the "Show internal" toggle can recompute
+        // the funnel without refetching. Falls back gracefully if the sheet
+        // has no header row or is missing expected columns.
+        function summarizeFunnelClient(rows) {
+            const perStep = {};
+            const abandonedAt = {};
+            if (!rows || rows.length < 2) return { perStep, abandonedAt };
+
+            const header = rows[0];
+            const stepCol = header.indexOf('step');
+            const abandonedCol = header.indexOf('abandonedAt');
+            const deviceCol = header.indexOf('deviceId');
+
+            for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                if (!showInternal && deviceCol >= 0 && INTERNAL_DEVICES.has(row[deviceCol])) continue;
+
+                const step = row[stepCol];
+                if (step) perStep[step] = (perStep[step] || 0) + 1;
+
+                const at = row[abandonedCol];
+                if (at) abandonedAt[at] = (abandonedAt[at] || 0) + 1;
+            }
+            return { perStep, abandonedAt };
         }
 
         const INTERNAL_DEVICES = new Set([
@@ -387,13 +416,20 @@
         // previous choice. Read eagerly so the checkbox reflects it on init.
         let showInternal = localStorage.getItem('showInternal') === 'true';
 
-        function renderDashboard(rows, funnelSummary) {
+        function renderDashboard(rows, funnelRows, funnelSummary) {
             const headers = rows[0];
             const allData = rows.slice(1).map(row => {
                 const obj = {};
                 headers.forEach((h, i) => obj[h] = row[i]);
                 return obj;
             });
+
+            // If we have raw funnel rows, recompute the summary client-side
+            // so it respects the internal-devices filter. Fall back to the
+            // server's pre-computed summary only if raw rows aren't available.
+            const effectiveFunnelSummary = funnelRows
+                ? summarizeFunnelClient(funnelRows)
+                : funnelSummary;
 
             // When internal is hidden, it's hidden everywhere (stats, charts,
             // table) so nothing can accidentally leak test captures into a
@@ -468,8 +504,8 @@
             html += '</div>';
 
             // Funnel section (only if the new Apps Script has served data)
-            if (funnelSummary && funnelSummary.perStep) {
-                html += renderFunnelSection(funnelSummary);
+            if (effectiveFunnelSummary && effectiveFunnelSummary.perStep) {
+                html += renderFunnelSection(effectiveFunnelSummary);
             }
 
             // Charts
@@ -793,7 +829,7 @@
         internalToggle.addEventListener('change', (e) => {
             showInternal = e.target.checked;
             localStorage.setItem('showInternal', String(showInternal));
-            if (cachedRows) renderDashboard(cachedRows, cachedFunnelSummary);
+            if (cachedRows) renderDashboard(cachedRows, cachedFunnelRows, cachedFunnelSummary);
         });
 
         // Load on start
