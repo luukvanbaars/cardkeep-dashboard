@@ -298,6 +298,32 @@
             align-items: center;
             justify-content: space-between;
         }
+
+        .header-controls {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        /* Small pill-style checkbox for the "Show internal" toggle. */
+        .toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            color: #888;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            cursor: pointer;
+            user-select: none;
+            transition: all 0.2s;
+        }
+
+        .toggle:hover { border-color: #ED9B61; color: #ED9B61; }
+
+        .toggle input { accent-color: #ED9B61; cursor: pointer; }
     </style>
 </head>
 <body>
@@ -310,7 +336,13 @@
                     <p id="subtitle">Loading...</p>
                 </div>
             </div>
-            <button class="refresh-btn" onclick="fetchData()">Refresh</button>
+            <div class="header-controls">
+                <label class="toggle">
+                    <input type="checkbox" id="internal-toggle">
+                    Show internal
+                </label>
+                <button class="refresh-btn" onclick="fetchData()">Refresh</button>
+            </div>
         </div>
     </div>
 
@@ -321,6 +353,11 @@
     <script>
         const ENDPOINT = 'https://script.google.com/macros/s/AKfycbxB7YD_JPm1_iKDFXAMKojC8M_MCFqmzO0kVn8RIB0EOvXG4j5mTbev5FurUTb6L3hW9A/exec';
 
+        // Cached response so toggling "Show internal" re-renders without a
+        // second network round-trip.
+        let cachedRows = null;
+        let cachedFunnelSummary = null;
+
         async function fetchData() {
             try {
                 const res = await fetch(ENDPOINT);
@@ -329,7 +366,9 @@
                 // Pass it through opportunistically so the funnel section
                 // just disappears when there's no data to render.
                 if (json.status === 'ok' && json.rows.length > 1) {
-                    renderDashboard(json.rows, json.funnelSummary || null);
+                    cachedRows = json.rows;
+                    cachedFunnelSummary = json.funnelSummary || null;
+                    renderDashboard(cachedRows, cachedFunnelSummary);
                 } else {
                     document.getElementById('content').innerHTML = '<div class="loading">No data yet — scan some cards!</div>';
                     document.getElementById('subtitle').textContent = 'No captures recorded';
@@ -344,6 +383,10 @@
             '693AEA1A-4BAE-46A9-B3E3-FC9FA2C202A3'
         ]);
 
+        // "Show internal" toggle state, persisted so a reload respects the
+        // previous choice. Read eagerly so the checkbox reflects it on init.
+        let showInternal = localStorage.getItem('showInternal') === 'true';
+
         function renderDashboard(rows, funnelSummary) {
             const headers = rows[0];
             const allData = rows.slice(1).map(row => {
@@ -352,9 +395,15 @@
                 return obj;
             });
 
-            // Split: filtered data for charts/stats, all data for table
-            const data = allData.filter(d => !INTERNAL_DEVICES.has(d['deviceId']));
-            const tableData = allData;
+            // When internal is hidden, it's hidden everywhere (stats, charts,
+            // table) so nothing can accidentally leak test captures into a
+            // public view. When shown, internal rows appear in the table
+            // with a faded INTERNAL badge but the numbers reflect the full set.
+            const visible = showInternal
+                ? allData
+                : allData.filter(d => !INTERNAL_DEVICES.has(d['deviceId']));
+            const data = visible;
+            const tableData = visible;
 
             // Stats
             const total = data.length;
@@ -736,6 +785,16 @@
         function deviceName(model) {
             return DEVICE_NAMES[model] || model;
         }
+
+        // Wire up "Show internal" toggle. Flip state, persist, and re-render
+        // from the cached response — no refetch needed.
+        const internalToggle = document.getElementById('internal-toggle');
+        internalToggle.checked = showInternal;
+        internalToggle.addEventListener('change', (e) => {
+            showInternal = e.target.checked;
+            localStorage.setItem('showInternal', String(showInternal));
+            if (cachedRows) renderDashboard(cachedRows, cachedFunnelSummary);
+        });
 
         // Load on start
         fetchData();
