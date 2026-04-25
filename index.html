@@ -257,6 +257,8 @@
         .badge-horizontal { background: #1a1a2a; color: #6b8bba; }
         .badge-postcard { background: #2a1a2a; color: #ba6bba; }
         .badge-diecut { background: #2a2218; color: #ED9B61; }
+        .badge-saved { background: #1a2a1a; color: #6bba6b; }
+        .badge-abandoned { background: #2a1a1a; color: #ba6b6b; }
 
         .loading {
             text-align: center;
@@ -460,6 +462,86 @@
             return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
         }
 
+        // One row per started session: where it ended (last step reached) and
+        // how long it took (started → last step). Used for the "Capture
+        // Sessions" table — gives raw visibility into individual flows that
+        // the aggregate funnel hides. Same internal-device filter as the
+        // other funnel functions.
+        function computeSessionsListClient(rows) {
+            if (!rows || rows.length < 2) return [];
+
+            const header = rows[0];
+            const tsCol = header.indexOf('timestamp');
+            const sessionCol = header.indexOf('sessionId');
+            const stepCol = header.indexOf('step');
+            const deviceCol = header.indexOf('deviceId');
+            const abandonedCol = header.indexOf('abandonedAt');
+            if (tsCol < 0 || sessionCol < 0 || stepCol < 0) return [];
+
+            const stepOrder = ['started', 'typeChosen', 'outsideScanned', 'previewReached', 'categorizeReached', 'saved'];
+            const stepRank = Object.fromEntries(stepOrder.map((s, i) => [s, i]));
+
+            // Group rows by sessionId, tracking earliest timestamp per step
+            // plus the device + any abandonedAt marker.
+            const sessions = new Map();
+            for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                if (!showInternal && deviceCol >= 0 && INTERNAL_DEVICES.has(row[deviceCol])) continue;
+                const sid = row[sessionCol];
+                const step = row[stepCol];
+                const ts = row[tsCol];
+                if (!sid || !step || !ts) continue;
+                const ms = (ts instanceof Date) ? ts.getTime() : new Date(ts).getTime();
+                if (Number.isNaN(ms)) continue;
+
+                if (!sessions.has(sid)) {
+                    sessions.set(sid, {
+                        sessionId: sid,
+                        deviceId: deviceCol >= 0 ? row[deviceCol] : null,
+                        stepTs: {},
+                        abandonedAt: null
+                    });
+                }
+                const s = sessions.get(sid);
+                if (s.stepTs[step] == null || ms < s.stepTs[step]) s.stepTs[step] = ms;
+                if (abandonedCol >= 0 && row[abandonedCol] && !s.abandonedAt) {
+                    s.abandonedAt = row[abandonedCol];
+                }
+            }
+
+            // Only include sessions that actually started — the dashboard's
+            // funnel uses "Started" as the denominator, this matches.
+            const out = [];
+            for (const s of sessions.values()) {
+                const startedAt = s.stepTs.started;
+                if (startedAt == null) continue;
+
+                // Last step reached = the step with highest rank that has a ts.
+                let lastStep = 'started';
+                let lastTs = startedAt;
+                for (const step of stepOrder) {
+                    if (s.stepTs[step] != null && stepRank[step] >= stepRank[lastStep]) {
+                        lastStep = step;
+                        lastTs = s.stepTs[step];
+                    }
+                }
+                out.push({
+                    sessionId: s.sessionId,
+                    deviceId: s.deviceId,
+                    startedAt,
+                    lastStep,
+                    lastTs,
+                    durationMs: lastTs - startedAt,
+                    completed: lastStep === 'saved',
+                    abandonedAt: s.abandonedAt
+                });
+            }
+
+            // Most recent first.
+            out.sort((a, b) => b.startedAt - a.startedAt);
+            return out;
+        }
+
         function formatDuration(ms) {
             if (ms == null) return '';
             if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -523,6 +605,9 @@
             const stepDurations = funnelRows
                 ? computeStepDurationsClient(funnelRows)
                 : { transitions: {}, endToEnd: null };
+            const sessionsList = funnelRows
+                ? computeSessionsListClient(funnelRows)
+                : [];
 
             // When internal is hidden, it's hidden everywhere (stats, charts,
             // table) so nothing can accidentally leak test captures into a
@@ -599,6 +684,13 @@
             // Funnel section (only if the new Apps Script has served data)
             if (effectiveFunnelSummary && effectiveFunnelSummary.perStep) {
                 html += renderFunnelSection(effectiveFunnelSummary, stepDurations);
+            }
+
+            // Per-session list — every started capture, where it ended, how
+            // long it took. Sits between the aggregate funnel and the rest
+            // of the charts so the relationship is obvious.
+            if (sessionsList.length) {
+                html += renderSessionsList(sessionsList);
             }
 
             // Charts
@@ -843,6 +935,63 @@
 
             html += '</div>'; // charts-grid
 
+            return html;
+        }
+
+        // Per-session list of started captures: where each one ended (saved
+        // or abandoned at a specific step) and how long it took from start
+        // to that last step. Limited to the most recent 30 so the table
+        // stays scannable; raw rows are still in the FunnelSteps sheet.
+        function renderSessionsList(sessions) {
+            if (!sessions.length) return '';
+
+            const stepLabels = {
+                started: 'Started',
+                typeChosen: 'Type chosen',
+                outsideScanned: 'Outside scanned',
+                previewReached: 'Preview reached',
+                categorizeReached: 'Categorize',
+                saved: 'Saved'
+            };
+
+            const completedCount = sessions.filter(s => s.completed).length;
+            const completionPct = (completedCount / sessions.length * 100).toFixed(0);
+
+            let html = '<div class="table-card" style="max-width:1200px;margin:0 auto 32px">';
+            html += `<h3>Capture Sessions <span style="color:#555;font-weight:400;font-size:13px">· ${sessions.length} started · ${completedCount} saved (${completionPct}%)</span></h3>`;
+            html += '<table><thead><tr>';
+            html += '<th>Started</th><th>Outcome</th><th>Last step</th><th>Duration</th><th>Device</th>';
+            html += '</tr></thead><tbody>';
+
+            const recent = sessions.slice(0, 30);
+            recent.forEach(s => {
+                const isInternal = s.deviceId && INTERNAL_DEVICES.has(s.deviceId);
+                const startedDate = new Date(s.startedAt);
+                const startedStr = formatTime(startedDate);
+                const outcomeBadge = s.completed
+                    ? '<span class="badge badge-saved">Saved</span>'
+                    : '<span class="badge badge-abandoned">Abandoned</span>';
+                const lastLabel = stepLabels[s.lastStep] || s.lastStep;
+                // For abandoned sessions, surface the explicit abandonedAt
+                // marker if it differs from the last step we saw — sometimes
+                // the app logs an exit point past the last numbered step.
+                const abandonedNote = (!s.completed && s.abandonedAt && s.abandonedAt !== s.lastStep)
+                    ? ` <span style="color:#666;font-size:11px">(exit: ${stepLabels[s.abandonedAt] || s.abandonedAt})</span>`
+                    : '';
+                const durationStr = s.durationMs > 0 ? formatDuration(s.durationMs) : '—';
+                const internalBadge = isInternal ? ' <span class="badge" style="background:#1a1a2a;color:#6b8bba">INTERNAL</span>' : '';
+                const rowStyle = isInternal ? ' style="opacity:0.5"' : '';
+
+                html += `<tr${rowStyle}>
+                    <td>${startedStr}${internalBadge}</td>
+                    <td>${outcomeBadge}</td>
+                    <td>${lastLabel}${abandonedNote}</td>
+                    <td>${durationStr}</td>
+                    <td style="color:#666;font-size:11px;font-family:monospace">${s.deviceId ? s.deviceId.slice(0, 8) : '—'}</td>
+                </tr>`;
+            });
+
+            html += '</tbody></table></div>';
             return html;
         }
 
