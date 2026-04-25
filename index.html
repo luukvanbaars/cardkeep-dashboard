@@ -689,8 +689,18 @@
             // Per-session list — every started capture, where it ended, how
             // long it took. Sits between the aggregate funnel and the rest
             // of the charts so the relationship is obvious.
+            //
+            // FunnelSteps rows only carry deviceId, not deviceModel — build
+            // a deviceId → most-recent-model map from the Captures sheet so
+            // the sessions table can show a friendly device name.
             if (sessionsList.length) {
-                html += renderSessionsList(sessionsList);
+                const deviceModels = {};
+                allData.forEach(d => {
+                    const id = d['deviceId'];
+                    const model = d['deviceModel'];
+                    if (id && model) deviceModels[id] = model;
+                });
+                html += renderSessionsList(sessionsList, deviceModels);
             }
 
             // Charts
@@ -942,8 +952,9 @@
         // or abandoned at a specific step) and how long it took from start
         // to that last step. Limited to the most recent 30 so the table
         // stays scannable; raw rows are still in the FunnelSteps sheet.
-        function renderSessionsList(sessions) {
+        function renderSessionsList(sessions, deviceModels) {
             if (!sessions.length) return '';
+            deviceModels = deviceModels || {};
 
             const stepLabels = {
                 started: 'Started',
@@ -960,7 +971,7 @@
             let html = '<div class="table-card" style="max-width:1200px;margin:0 auto 32px">';
             html += `<h3>Capture Sessions <span style="color:#555;font-weight:400;font-size:13px">· ${sessions.length} started · ${completedCount} saved (${completionPct}%)</span></h3>`;
             html += '<table><thead><tr>';
-            html += '<th>Started</th><th>Outcome</th><th>Last step</th><th>Duration</th><th>Device</th>';
+            html += '<th>Started</th><th>Outcome</th><th>Last step</th><th>Duration</th><th>Device</th><th>Model</th>';
             html += '</tr></thead><tbody>';
 
             const recent = sessions.slice(0, 30);
@@ -982,12 +993,15 @@
                 const internalBadge = isInternal ? ' <span class="badge" style="background:#1a1a2a;color:#6b8bba">INTERNAL</span>' : '';
                 const rowStyle = isInternal ? ' style="opacity:0.5"' : '';
 
+                const modelCode = s.deviceId ? deviceModels[s.deviceId] : null;
+                const modelLabel = modelCode ? deviceName(modelCode) : '—';
                 html += `<tr${rowStyle}>
                     <td>${startedStr}${internalBadge}</td>
                     <td>${outcomeBadge}</td>
                     <td>${lastLabel}${abandonedNote}</td>
                     <td>${durationStr}</td>
                     <td style="color:#666;font-size:11px;font-family:monospace">${s.deviceId ? s.deviceId.slice(0, 8) : '—'}</td>
+                    <td>${modelLabel}</td>
                 </tr>`;
             });
 
