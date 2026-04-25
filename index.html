@@ -380,6 +380,96 @@
             }
         }
 
+        // Compute median time between consecutive funnel steps, plus
+        // end-to-end median for fully completed sessions. Uses the same
+        // showInternal filter as summarizeFunnelClient so durations and counts
+        // stay consistent.
+        //
+        // Caveat: timestamps are set server-side when each POST lands, so
+        // per-step durations carry network-latency noise. Medians across many
+        // sessions damp it; treat as approximate.
+        function computeStepDurationsClient(rows) {
+            const empty = { transitions: {}, endToEnd: null };
+            if (!rows || rows.length < 2) return empty;
+
+            const header = rows[0];
+            const tsCol = header.indexOf('timestamp');
+            const sessionCol = header.indexOf('sessionId');
+            const stepCol = header.indexOf('step');
+            const deviceCol = header.indexOf('deviceId');
+            if (tsCol < 0 || sessionCol < 0 || stepCol < 0) return empty;
+
+            // Group rows into sessions, capturing the earliest timestamp per
+            // step (in case the same step is logged twice within one session).
+            const sessions = new Map();
+            for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                if (!showInternal && deviceCol >= 0 && INTERNAL_DEVICES.has(row[deviceCol])) continue;
+                const sid = row[sessionCol];
+                const step = row[stepCol];
+                const ts = row[tsCol];
+                if (!sid || !step || !ts) continue;
+                const ms = (ts instanceof Date) ? ts.getTime() : new Date(ts).getTime();
+                if (Number.isNaN(ms)) continue;
+                if (!sessions.has(sid)) sessions.set(sid, {});
+                const stepFirstTs = sessions.get(sid);
+                if (stepFirstTs[step] == null || ms < stepFirstTs[step]) {
+                    stepFirstTs[step] = ms;
+                }
+            }
+
+            const stepOrder = ['started', 'typeChosen', 'outsideScanned', 'previewReached', 'categorizeReached', 'saved'];
+            const transitionTimes = {}; // key 'a→b' → [durations in ms]
+            const endToEndTimes = [];
+
+            for (const stepFirstTs of sessions.values()) {
+                for (let i = 1; i < stepOrder.length; i++) {
+                    const prev = stepOrder[i - 1];
+                    const curr = stepOrder[i];
+                    if (stepFirstTs[prev] != null && stepFirstTs[curr] != null) {
+                        const dt = stepFirstTs[curr] - stepFirstTs[prev];
+                        if (dt >= 0) {
+                            const key = `${prev}→${curr}`;
+                            (transitionTimes[key] ||= []).push(dt);
+                        }
+                    }
+                }
+                if (stepFirstTs.started != null && stepFirstTs.saved != null) {
+                    const dt = stepFirstTs.saved - stepFirstTs.started;
+                    if (dt >= 0) endToEndTimes.push(dt);
+                }
+            }
+
+            const transitions = {};
+            Object.entries(transitionTimes).forEach(([k, vals]) => {
+                transitions[k] = { medianMs: median(vals), n: vals.length };
+            });
+
+            return {
+                transitions,
+                endToEnd: endToEndTimes.length
+                    ? { medianMs: median(endToEndTimes), n: endToEndTimes.length }
+                    : null
+            };
+        }
+
+        function median(arr) {
+            if (!arr.length) return null;
+            const sorted = [...arr].sort((a, b) => a - b);
+            const mid = Math.floor(sorted.length / 2);
+            return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+        }
+
+        function formatDuration(ms) {
+            if (ms == null) return '';
+            if (ms < 1000) return `${Math.round(ms)}ms`;
+            const s = ms / 1000;
+            if (s < 60) return `${s.toFixed(1)}s`;
+            const m = Math.floor(s / 60);
+            const rem = Math.round(s - m * 60);
+            return rem ? `${m}m ${rem}s` : `${m}m`;
+        }
+
         // Client-side mirror of the Apps Script's summarizeFunnel(), with an
         // extra deviceId filter so the "Show internal" toggle can recompute
         // the funnel without refetching. Falls back gracefully if the sheet
@@ -430,6 +520,9 @@
             const effectiveFunnelSummary = funnelRows
                 ? summarizeFunnelClient(funnelRows)
                 : funnelSummary;
+            const stepDurations = funnelRows
+                ? computeStepDurationsClient(funnelRows)
+                : { transitions: {}, endToEnd: null };
 
             // When internal is hidden, it's hidden everywhere (stats, charts,
             // table) so nothing can accidentally leak test captures into a
@@ -505,7 +598,7 @@
 
             // Funnel section (only if the new Apps Script has served data)
             if (effectiveFunnelSummary && effectiveFunnelSummary.perStep) {
-                html += renderFunnelSection(effectiveFunnelSummary);
+                html += renderFunnelSection(effectiveFunnelSummary, stepDurations);
             }
 
             // Charts
@@ -650,7 +743,10 @@
         // number of sessions that started, plus a drop-off chart showing where
         // abandoners bailed. The step order matches AnalyticsService.FunnelStep
         // in the iOS app.
-        function renderFunnelSection(summary) {
+        //
+        // Per-step duration labels show median time spent reaching that step
+        // from the previous one (computed client-side from session timestamps).
+        function renderFunnelSection(summary, durations) {
             const stepOrder = [
                 { key: 'started', label: 'Started' },
                 { key: 'typeChosen', label: 'Type chosen' },
@@ -662,6 +758,8 @@
 
             const perStep = summary.perStep || {};
             const abandonedAt = summary.abandonedAt || {};
+            const transitions = (durations && durations.transitions) || {};
+            const endToEnd = durations && durations.endToEnd;
             const started = perStep.started || 0;
 
             if (started === 0) return '';
@@ -670,7 +768,7 @@
 
             // Left: the funnel itself
             html += '<div class="chart-card">';
-            html += `<h3>Scan Funnel — ${started} session${started === 1 ? '' : 's'}</h3>`;
+            html += `<h3>Scan Funnel — ${started} session${started === 1 ? '' : 's'}<span style="color:#555;font-weight:400"> · median time per step</span></h3>`;
             html += '<div class="bar-chart">';
             let prevCount = started;
             stepOrder.forEach((s, i) => {
@@ -682,10 +780,22 @@
                 const color = i === 0 ? '#ED9B61' : (count === 0 ? '#3a3a3a' : '#ED9B61');
                 const dropLabel = i === 0 ? '' :
                     `<span style="color:#666"> · −${dropFromPrev.toFixed(0)}%</span>`;
+                // Median time from previous step → this step (no label on
+                // "Started" since there's no preceding step to time from).
+                let timeLabel = '';
+                if (i > 0) {
+                    const t = transitions[`${stepOrder[i - 1].key}→${s.key}`];
+                    if (t && t.medianMs != null) {
+                        timeLabel = `<div style="font-size:11px;color:#666;margin-top:2px">+${formatDuration(t.medianMs)} <span style="color:#444">(n=${t.n})</span></div>`;
+                    }
+                }
                 html += `<div class="bar-row">
                     <div class="bar-label" style="width:120px">${s.label}</div>
-                    <div class="bar-track">
-                        <div class="bar-fill" style="width:${pctOfStart.toFixed(1)}%;background:${color};opacity:${0.4 + (pctOfStart/200)}"></div>
+                    <div style="flex:1;display:flex;flex-direction:column;gap:0">
+                        <div class="bar-track">
+                            <div class="bar-fill" style="width:${pctOfStart.toFixed(1)}%;background:${color};opacity:${0.4 + (pctOfStart/200)}"></div>
+                        </div>
+                        ${timeLabel}
                     </div>
                     <div class="bar-count" style="width:90px">${count} <span style="color:#555">(${pctOfStart.toFixed(0)}%)</span>${dropLabel}</div>
                 </div>`;
@@ -693,12 +803,16 @@
             });
             html += '</div>';
 
-            // Overall conversion rate
+            // Overall conversion rate, plus median end-to-end time for fully
+            // completed sessions when we have it.
             const saved = perStep.saved || 0;
             const overall = started ? (saved / started * 100) : 0;
+            const endToEndLabel = endToEnd && endToEnd.medianMs != null
+                ? ` <span style="font-size:13px;font-weight:400;color:#888">· ${formatDuration(endToEnd.medianMs)} median</span>`
+                : '';
             html += `<div style="margin-top:20px;padding-top:16px;border-top:1px solid #222;display:flex;justify-content:space-between;align-items:baseline">
                 <span style="font-size:12px;color:#666;text-transform:uppercase;letter-spacing:1px">Overall completion</span>
-                <span style="font-size:24px;font-weight:700;color:#fff">${overall.toFixed(1)}%</span>
+                <span style="font-size:24px;font-weight:700;color:#fff">${overall.toFixed(1)}%${endToEndLabel}</span>
             </div>`;
             html += '</div>';
 
