@@ -695,22 +695,23 @@
                 html += renderFunnelSection(effectiveFunnelSummary, stepDurations);
             }
 
-            // Per-session list — every started capture, where it ended, how
-            // long it took. Sits between the aggregate funnel and the rest
-            // of the charts so the relationship is obvious.
+            // Unified capture timeline — combines the per-session funnel data
+            // (every started capture + where it ended + duration) with the
+            // per-card capture metadata (type/category/die-cut/from). One
+            // row per session when funnel data exists; orphan capture rows
+            // (saved before FunnelSteps logging existed, or saved without a
+            // matching session) are appended so nothing's hidden.
             //
             // FunnelSteps rows only carry deviceId, not deviceModel — build
-            // a deviceId → most-recent-model map from the Captures sheet so
-            // the sessions table can show a friendly device name.
-            if (sessionsList.length) {
-                const deviceModels = {};
-                allData.forEach(d => {
-                    const id = d['deviceId'];
-                    const model = d['deviceModel'];
-                    if (id && model) deviceModels[id] = model;
-                });
-                html += renderSessionsList(sessionsList, deviceModels);
-            }
+            // a deviceId → most-recent-model map from the Captures sheet as
+            // a fallback for older sessions.
+            const deviceModels = {};
+            allData.forEach(d => {
+                const id = d['deviceId'];
+                const model = d['deviceModel'];
+                if (id && model) deviceModels[id] = model;
+            });
+            html += renderTimeline(sessionsList, tableData, deviceModels);
 
             // Charts
             html += '<div class="charts-grid">';
@@ -777,41 +778,6 @@
                 </div>`;
             });
             html += '</div></div>';
-
-            // Recent captures table
-            html += '<div class="table-card">';
-            html += '<h3>Recent Captures</h3>';
-            html += '<table><thead><tr>';
-            html += '<th>Time</th><th>Type</th><th>Category</th><th>Die-Cut</th><th>From</th><th>Device</th><th>Version</th>';
-            html += '</tr></thead><tbody>';
-
-            const recent = [...tableData].reverse().slice(0, 30);
-            recent.forEach(d => {
-                const isInternal = INTERNAL_DEVICES.has(d['deviceId']);
-                const ts = d['timestamp'];
-                const time = ts ? formatTime(ts instanceof Date ? ts : new Date(ts)) : '—';
-                const type = d['cardType'] || '—';
-                const typeBadge = `badge-${type}`;
-                const cat = d['category'] || '—';
-                const diecut = (d['isDieCut'] === true || d['isDieCut'] === 'TRUE') ? '<span class="badge badge-diecut">Die-Cut</span>' : '—';
-                const from = (d['hasFromPerson'] === true || d['hasFromPerson'] === 'TRUE') ? 'Yes' : '—';
-                const device = deviceName(d['deviceModel'] || '') || '—';
-                const version = d['appVersion'] || '—';
-                const internalBadge = isInternal ? ' <span class="badge" style="background:#1a1a2a;color:#6b8bba">INTERNAL</span>' : '';
-                const rowStyle = isInternal ? ' style="opacity:0.5"' : '';
-
-                html += `<tr${rowStyle}>
-                    <td>${time}${internalBadge}</td>
-                    <td><span class="badge ${typeBadge}">${type}</span></td>
-                    <td>${cat}</td>
-                    <td>${diecut}</td>
-                    <td>${from}</td>
-                    <td>${device}</td>
-                    <td>${version}</td>
-                </tr>`;
-            });
-
-            html += '</tbody></table></div>';
 
             document.getElementById('content').innerHTML = html;
         }
@@ -957,12 +923,19 @@
             return html;
         }
 
-        // Per-session list of started captures: where each one ended (saved
-        // or abandoned at a specific step) and how long it took from start
-        // to that last step. Limited to the most recent 30 so the table
-        // stays scannable; raw rows are still in the FunnelSteps sheet.
-        function renderSessionsList(sessions, deviceModels) {
-            if (!sessions.length) return '';
+        // Unified capture timeline: every started session in chronological
+        // order, enriched with the saved card's metadata when one exists.
+        // Captures that have no matching session (older data, or saves
+        // logged before FunnelSteps existed) are appended as "capture-only"
+        // rows so the timeline stays complete.
+        //
+        // Match strategy: prefer sessionId (if Captures sheet carries one),
+        // then fall back to deviceId + timestamp proximity (within 60s of
+        // the session's last step). If neither matches, the saved-session
+        // row just shows "—" for the per-card columns.
+        function renderTimeline(sessions, captureRows, deviceModels) {
+            sessions = sessions || [];
+            captureRows = captureRows || [];
             deviceModels = deviceModels || {};
 
             const stepLabels = {
@@ -974,47 +947,139 @@
                 saved: 'Saved'
             };
 
-            const completedCount = sessions.filter(s => s.completed).length;
-            const completionPct = (completedCount / sessions.length * 100).toFixed(0);
+            // Index captures by sessionId for fast lookup. Track which ones
+            // we matched to a session so we can list orphans afterward.
+            const captureBySession = {};
+            const captureTs = captureRows.map(c => {
+                const ts = c['timestamp'];
+                return ts ? (ts instanceof Date ? ts.getTime() : new Date(ts).getTime()) : NaN;
+            });
+            captureRows.forEach(c => {
+                if (c['sessionId']) captureBySession[c['sessionId']] = c;
+            });
+            const matched = new Set();
+
+            function findCapture(session) {
+                let cap = captureBySession[session.sessionId];
+                if (cap) {
+                    matched.add(captureRows.indexOf(cap));
+                    return cap;
+                }
+                // Fallback: same device, capture lands within 60s of the
+                // session's last logged step. Pick the closest match.
+                if (!session.completed || !session.deviceId) return null;
+                let bestIdx = -1;
+                let bestDist = Infinity;
+                for (let i = 0; i < captureRows.length; i++) {
+                    if (matched.has(i)) continue;
+                    if (captureRows[i]['deviceId'] !== session.deviceId) continue;
+                    const dist = Math.abs(captureTs[i] - session.lastTs);
+                    if (Number.isNaN(dist) || dist > 60000) continue;
+                    if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+                }
+                if (bestIdx >= 0) {
+                    matched.add(bestIdx);
+                    return captureRows[bestIdx];
+                }
+                return null;
+            }
+
+            // Build session rows
+            const rows = sessions.map(s => {
+                const capture = findCapture(s);
+                return { kind: 'session', sortTs: s.startedAt, session: s, capture };
+            });
+
+            // Append orphan captures (no matching session)
+            captureRows.forEach((c, i) => {
+                if (matched.has(i)) return;
+                if (Number.isNaN(captureTs[i])) return;
+                rows.push({ kind: 'capture-only', sortTs: captureTs[i], session: null, capture: c });
+            });
+
+            if (!rows.length) return '';
+
+            rows.sort((a, b) => b.sortTs - a.sortTs);
+            const limited = rows.slice(0, 50);
+
+            const startedCount = sessions.length;
+            const savedCount = sessions.filter(s => s.completed).length;
+            const completionPct = startedCount ? (savedCount / startedCount * 100).toFixed(0) : 0;
+            const summaryLine = startedCount
+                ? `${startedCount} started · ${savedCount} saved (${completionPct}%) · ${captureRows.length} total captures`
+                : `${captureRows.length} captures`;
 
             let html = '<div class="table-card" style="max-width:1200px;margin:0 auto 32px">';
-            html += `<h3>Capture Sessions <span style="color:#555;font-weight:400;font-size:13px">· ${sessions.length} started · ${completedCount} saved (${completionPct}%)</span></h3>`;
+            html += `<h3>Capture Timeline <span style="color:#555;font-weight:400;font-size:13px">· ${summaryLine}</span></h3>`;
             html += '<table><thead><tr>';
-            html += '<th>Started</th><th>Outcome</th><th>Last step</th><th>Duration</th><th>Device</th><th>Model</th>';
+            html += '<th>Time</th><th>Outcome</th><th>Last step</th><th>Duration</th><th>Type</th><th>Category</th><th>Die-Cut</th><th>From</th><th>Model</th><th>Version</th>';
             html += '</tr></thead><tbody>';
 
-            const recent = sessions.slice(0, 30);
-            recent.forEach(s => {
-                const isInternal = s.deviceId && INTERNAL_DEVICES.has(s.deviceId);
-                const startedDate = new Date(s.startedAt);
-                const startedStr = formatTime(startedDate);
-                const outcomeBadge = s.completed
-                    ? '<span class="badge badge-saved">Saved</span>'
-                    : '<span class="badge badge-abandoned">Abandoned</span>';
-                const lastLabel = stepLabels[s.lastStep] || s.lastStep;
-                // For abandoned sessions, surface the explicit abandonedAt
-                // marker if it differs from the last step we saw — sometimes
-                // the app logs an exit point past the last numbered step.
-                const abandonedNote = (!s.completed && s.abandonedAt && s.abandonedAt !== s.lastStep)
-                    ? ` <span style="color:#666;font-size:11px">(exit: ${stepLabels[s.abandonedAt] || s.abandonedAt})</span>`
-                    : '';
-                const durationStr = s.durationMs > 0 ? formatDuration(s.durationMs) : '—';
+            limited.forEach(r => {
+                const s = r.session;
+                const c = r.capture;
+                const deviceId = (s && s.deviceId) || (c && c['deviceId']) || null;
+                const isInternal = deviceId && INTERNAL_DEVICES.has(deviceId);
                 const internalBadge = isInternal ? ' <span class="badge" style="background:#1a1a2a;color:#6b8bba">INTERNAL</span>' : '';
                 const rowStyle = isInternal ? ' style="opacity:0.5"' : '';
 
-                // Prefer the model logged on the funnel row itself; fall
-                // back to a deviceId lookup against the Captures sheet for
-                // older sessions logged before deviceModel was added to
-                // FunnelSteps.
-                const modelCode = s.deviceModel || (s.deviceId ? deviceModels[s.deviceId] : null);
+                // Time: session start when we have one, else capture ts
+                const time = formatTime(new Date(r.sortTs));
+
+                // Outcome
+                let outcomeBadge;
+                if (s) {
+                    outcomeBadge = s.completed
+                        ? '<span class="badge badge-saved">Saved</span>'
+                        : '<span class="badge badge-abandoned">Abandoned</span>';
+                } else {
+                    outcomeBadge = '<span class="badge badge-saved" style="opacity:0.7">Saved</span>';
+                }
+
+                // Last step / duration only meaningful for session rows
+                let lastLabel = '—';
+                let durationStr = '—';
+                if (s) {
+                    lastLabel = stepLabels[s.lastStep] || s.lastStep;
+                    if (!s.completed && s.abandonedAt && s.abandonedAt !== s.lastStep) {
+                        lastLabel += ` <span style="color:#666;font-size:11px">(exit: ${stepLabels[s.abandonedAt] || s.abandonedAt})</span>`;
+                    }
+                    durationStr = s.durationMs > 0 ? formatDuration(s.durationMs) : '—';
+                }
+
+                // Per-card metadata from the capture row (if present)
+                let typeCell = '—';
+                let cat = '—';
+                let diecut = '—';
+                let from = '—';
+                let version = '—';
+                if (c) {
+                    const type = c['cardType'] || '—';
+                    typeCell = type !== '—' ? `<span class="badge badge-${type}">${type}</span>` : '—';
+                    cat = c['category'] || '—';
+                    diecut = (c['isDieCut'] === true || c['isDieCut'] === 'TRUE')
+                        ? '<span class="badge badge-diecut">Die-Cut</span>' : '—';
+                    from = (c['hasFromPerson'] === true || c['hasFromPerson'] === 'TRUE') ? 'Yes' : '—';
+                    version = c['appVersion'] || '—';
+                }
+
+                // Model: prefer session's deviceModel, then capture's, then map
+                const modelCode = (s && s.deviceModel)
+                    || (c && c['deviceModel'])
+                    || (deviceId ? deviceModels[deviceId] : null);
                 const modelLabel = modelCode ? deviceName(modelCode) : '—';
+
                 html += `<tr${rowStyle}>
-                    <td>${startedStr}${internalBadge}</td>
+                    <td>${time}${internalBadge}</td>
                     <td>${outcomeBadge}</td>
-                    <td>${lastLabel}${abandonedNote}</td>
+                    <td>${lastLabel}</td>
                     <td>${durationStr}</td>
-                    <td style="color:#666;font-size:11px;font-family:monospace">${s.deviceId ? s.deviceId.slice(0, 8) : '—'}</td>
+                    <td>${typeCell}</td>
+                    <td>${cat}</td>
+                    <td>${diecut}</td>
+                    <td>${from}</td>
                     <td>${modelLabel}</td>
+                    <td>${version}</td>
                 </tr>`;
             });
 
