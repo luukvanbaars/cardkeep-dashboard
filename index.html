@@ -475,6 +475,7 @@
             const sessionCol = header.indexOf('sessionId');
             const stepCol = header.indexOf('step');
             const deviceCol = header.indexOf('deviceId');
+            const modelCol = header.indexOf('deviceModel');
             const abandonedCol = header.indexOf('abandonedAt');
             if (tsCol < 0 || sessionCol < 0 || stepCol < 0) return [];
 
@@ -498,12 +499,19 @@
                     sessions.set(sid, {
                         sessionId: sid,
                         deviceId: deviceCol >= 0 ? row[deviceCol] : null,
+                        deviceModel: modelCol >= 0 ? row[modelCol] : null,
                         stepTs: {},
                         abandonedAt: null
                     });
                 }
                 const s = sessions.get(sid);
                 if (s.stepTs[step] == null || ms < s.stepTs[step]) s.stepTs[step] = ms;
+                // First non-empty deviceModel wins — every row in a session
+                // should have the same one anyway, but earlier rows are more
+                // likely to be filled if the column was added recently.
+                if (modelCol >= 0 && row[modelCol] && !s.deviceModel) {
+                    s.deviceModel = row[modelCol];
+                }
                 if (abandonedCol >= 0 && row[abandonedCol] && !s.abandonedAt) {
                     s.abandonedAt = row[abandonedCol];
                 }
@@ -528,6 +536,7 @@
                 out.push({
                     sessionId: s.sessionId,
                     deviceId: s.deviceId,
+                    deviceModel: s.deviceModel,
                     startedAt,
                     lastStep,
                     lastTs,
@@ -993,7 +1002,11 @@
                 const internalBadge = isInternal ? ' <span class="badge" style="background:#1a1a2a;color:#6b8bba">INTERNAL</span>' : '';
                 const rowStyle = isInternal ? ' style="opacity:0.5"' : '';
 
-                const modelCode = s.deviceId ? deviceModels[s.deviceId] : null;
+                // Prefer the model logged on the funnel row itself; fall
+                // back to a deviceId lookup against the Captures sheet for
+                // older sessions logged before deviceModel was added to
+                // FunnelSteps.
+                const modelCode = s.deviceModel || (s.deviceId ? deviceModels[s.deviceId] : null);
                 const modelLabel = modelCode ? deviceName(modelCode) : '—';
                 html += `<tr${rowStyle}>
                     <td>${startedStr}${internalBadge}</td>
