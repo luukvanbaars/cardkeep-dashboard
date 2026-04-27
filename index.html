@@ -783,6 +783,63 @@
             });
             html += '</div></div>';
 
+            // Locations — derived from device locale + timezone (no GPS,
+            // no permission). Country = ISO region from iOS Settings,
+            // timezone = IANA identifier. Only renders if at least one row
+            // carries either field, so old data without location columns
+            // doesn't cause an empty card.
+            const countries = {};
+            const timezones = {};
+            data.forEach(d => {
+                const c = d['country'];
+                const tz = d['timezone'];
+                if (c) countries[c] = (countries[c] || 0) + 1;
+                if (tz) timezones[tz] = (timezones[tz] || 0) + 1;
+            });
+            const hasLocation = Object.keys(countries).length || Object.keys(timezones).length;
+            if (hasLocation) {
+                html += '<div class="chart-card">';
+                html += '<h3>Locations <span style="color:#555;font-weight:400;font-size:13px">· device locale + timezone</span></h3>';
+
+                // Countries: friendly name + flag emoji
+                const sortedCountries = Object.entries(countries).sort((a, b) => b[1] - a[1]);
+                const maxCountry = sortedCountries.length ? sortedCountries[0][1] : 1;
+                html += '<div class="bar-chart" style="margin-bottom:16px">';
+                sortedCountries.forEach(([code, count]) => {
+                    const pct = (count / maxCountry * 100).toFixed(1);
+                    const flag = countryFlag(code);
+                    const name = countryName(code);
+                    html += `<div class="bar-row">
+                        <div class="bar-label" style="width:160px">${flag} ${name} <span style="color:#555">${code}</span></div>
+                        <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:#6b8bba"></div></div>
+                        <div class="bar-count">${count}</div>
+                    </div>`;
+                });
+                html += '</div>';
+
+                // Timezones: secondary, smaller list
+                const sortedTzs = Object.entries(timezones).sort((a, b) => b[1] - a[1]).slice(0, 8);
+                if (sortedTzs.length) {
+                    html += '<div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Timezones</div>';
+                    const maxTz = sortedTzs[0][1];
+                    html += '<div class="bar-chart">';
+                    sortedTzs.forEach(([tz, count]) => {
+                        const pct = (count / maxTz * 100).toFixed(1);
+                        // Drop the IANA continent prefix to save horizontal
+                        // space — "America/Toronto" → "Toronto".
+                        const short = tz.includes('/') ? tz.split('/').slice(1).join('/').replace(/_/g, ' ') : tz;
+                        html += `<div class="bar-row">
+                            <div class="bar-label" style="width:160px;font-size:12px">${short}</div>
+                            <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:#6bba6b;opacity:0.6"></div></div>
+                            <div class="bar-count">${count}</div>
+                        </div>`;
+                    });
+                    html += '</div>';
+                }
+
+                html += '</div>';
+            }
+
             html += '</div>';
 
             // Timeline — full width
@@ -1287,6 +1344,35 @@
 
         function deviceName(model) {
             return DEVICE_NAMES[model] || model;
+        }
+
+        // ISO 3166 alpha-2 country code → flag emoji. Pure unicode trick:
+        // each ASCII letter A–Z maps to a regional-indicator symbol; pasted
+        // together they render as a flag. No table needed.
+        function countryFlag(code) {
+            if (!code || code.length !== 2) return '';
+            const A = 0x1F1E6;
+            const a = 'A'.charCodeAt(0);
+            const c = code.toUpperCase();
+            return String.fromCodePoint(A + c.charCodeAt(0) - a)
+                 + String.fromCodePoint(A + c.charCodeAt(1) - a);
+        }
+
+        // ISO 3166 alpha-2 → display name via Intl. Falls back to the raw
+        // code if the browser doesn't have it (very rare).
+        const _countryNameCache = {};
+        const _displayNames = (typeof Intl !== 'undefined' && Intl.DisplayNames)
+            ? new Intl.DisplayNames(['en'], { type: 'region' })
+            : null;
+        function countryName(code) {
+            if (!code) return '';
+            if (_countryNameCache[code]) return _countryNameCache[code];
+            let name = code;
+            if (_displayNames) {
+                try { name = _displayNames.of(code) || code; } catch (e) {}
+            }
+            _countryNameCache[code] = name;
+            return name;
         }
 
         // Toggle a burst cluster open/closed in the Capture Timeline. Bound
