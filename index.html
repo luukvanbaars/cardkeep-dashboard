@@ -260,6 +260,28 @@
         .badge-saved { background: #1a2a1a; color: #6bba6b; }
         .badge-abandoned { background: #2a1a1a; color: #ba6b6b; }
 
+        /* Burst-cluster rows: collapsed groups of rapid-fire sessions
+           from the same device. Click the header to expand. */
+        tr.cluster-header { cursor: pointer; }
+        tr.cluster-header td {
+            background: #131313;
+            color: #888;
+            font-size: 12px;
+            padding: 10px 12px;
+        }
+        tr.cluster-header:hover td { background: #181818; color: #ccc; }
+        tr.cluster-header .cluster-arrow {
+            display: inline-block;
+            width: 14px;
+            color: #555;
+            transition: transform 0.15s;
+        }
+        tr.cluster-row td {
+            background: #0d0d0d;
+            border-left: 2px solid #2a2a2a;
+        }
+        tr.cluster-row td:first-child { padding-left: 24px; }
+
         .loading {
             text-align: center;
             padding: 80px 0;
@@ -1000,7 +1022,30 @@
             if (!rows.length) return '';
 
             rows.sort((a, b) => b.sortTs - a.sortTs);
-            const limited = rows.slice(0, 50);
+
+            // Cluster adjacent rows from the same device that landed within
+            // BURST_GAP_MS of each other — these are almost always one user
+            // tapping in and out of the flow, not separate intent. Showing
+            // them as a single collapsed row keeps the timeline scannable.
+            // Clicking the cluster header reveals the individual rows.
+            const BURST_GAP_MS = 5 * 60 * 1000; // 5 minutes
+            const clusters = [];
+            for (const r of rows) {
+                const deviceId = (r.session && r.session.deviceId) || (r.capture && r.capture['deviceId']) || null;
+                const last = clusters[clusters.length - 1];
+                if (last
+                    && last.deviceId
+                    && last.deviceId === deviceId
+                    && (last.minTs - r.sortTs) < BURST_GAP_MS) {
+                    last.rows.push(r);
+                    last.minTs = Math.min(last.minTs, r.sortTs);
+                } else {
+                    clusters.push({ deviceId, rows: [r], minTs: r.sortTs });
+                }
+            }
+            // Cap how many clusters we show so the table stays bounded.
+            const MAX_CLUSTERS = 40;
+            const limitedClusters = clusters.slice(0, MAX_CLUSTERS);
 
             const startedCount = sessions.length;
             const savedCount = sessions.filter(s => s.completed).length;
@@ -1015,18 +1060,17 @@
             html += '<th>Time</th><th>Outcome</th><th>Last step</th><th>Duration</th><th>Type</th><th>Category</th><th>Die-Cut</th><th>From</th><th>Model</th><th>Version</th>';
             html += '</tr></thead><tbody>';
 
-            limited.forEach(r => {
+            // Render one row in the timeline. extraClass lets the caller
+            // tag it as a cluster-child so CSS can indent + colour it.
+            function renderRow(r, extraClass) {
                 const s = r.session;
                 const c = r.capture;
                 const deviceId = (s && s.deviceId) || (c && c['deviceId']) || null;
                 const isInternal = deviceId && INTERNAL_DEVICES.has(deviceId);
                 const internalBadge = isInternal ? ' <span class="badge" style="background:#1a1a2a;color:#6b8bba">INTERNAL</span>' : '';
-                const rowStyle = isInternal ? ' style="opacity:0.5"' : '';
-
-                // Time: session start when we have one, else capture ts
+                const opacity = isInternal ? 'opacity:0.5;' : '';
                 const time = formatTime(new Date(r.sortTs));
 
-                // Outcome
                 let outcomeBadge;
                 if (s) {
                     outcomeBadge = s.completed
@@ -1036,7 +1080,6 @@
                     outcomeBadge = '<span class="badge badge-saved" style="opacity:0.7">Saved</span>';
                 }
 
-                // Last step / duration only meaningful for session rows
                 let lastLabel = '—';
                 let durationStr = '—';
                 if (s) {
@@ -1047,7 +1090,6 @@
                     durationStr = s.durationMs > 0 ? formatDuration(s.durationMs) : '—';
                 }
 
-                // Per-card metadata from the capture row (if present)
                 let typeCell = '—';
                 let cat = '—';
                 let diecut = '—';
@@ -1063,13 +1105,16 @@
                     version = c['appVersion'] || '—';
                 }
 
-                // Model: prefer session's deviceModel, then capture's, then map
                 const modelCode = (s && s.deviceModel)
                     || (c && c['deviceModel'])
                     || (deviceId ? deviceModels[deviceId] : null);
                 const modelLabel = modelCode ? deviceName(modelCode) : '—';
 
-                html += `<tr${rowStyle}>
+                const cls = extraClass ? ` class="${extraClass}"` : '';
+                const style = (extraClass ? 'display:none;' : '') + opacity;
+                const styleAttr = style ? ` style="${style}"` : '';
+
+                return `<tr${cls}${styleAttr}>
                     <td>${time}${internalBadge}</td>
                     <td>${outcomeBadge}</td>
                     <td>${lastLabel}</td>
@@ -1081,6 +1126,73 @@
                     <td>${modelLabel}</td>
                     <td>${version}</td>
                 </tr>`;
+            }
+
+            let clusterIdx = 0;
+            limitedClusters.forEach(cluster => {
+                if (cluster.rows.length === 1) {
+                    html += renderRow(cluster.rows[0], null);
+                    return;
+                }
+
+                // Multi-row cluster: header summary + hidden child rows.
+                clusterIdx++;
+                const clusterId = `tlc${clusterIdx}`;
+                const cRows = cluster.rows;
+                const newest = cRows[0];                   // most recent (rows are desc-sorted)
+                const oldest = cRows[cRows.length - 1];
+                const spanMs = newest.sortTs - oldest.sortTs;
+                const sessionRows = cRows.filter(r => r.session);
+                const savedInCluster = sessionRows.filter(r => r.session.completed).length;
+                const abandonedInCluster = sessionRows.length - savedInCluster;
+                const captureOnly = cRows.length - sessionRows.length;
+
+                // Most common last step (only when we have session rows)
+                let dominantStep = null;
+                if (sessionRows.length) {
+                    const counts = {};
+                    sessionRows.forEach(r => {
+                        counts[r.session.lastStep] = (counts[r.session.lastStep] || 0) + 1;
+                    });
+                    dominantStep = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+                }
+
+                // Device + model for header
+                const dId = cluster.deviceId;
+                const isInternal = dId && INTERNAL_DEVICES.has(dId);
+                const sampleSession = sessionRows[0] && sessionRows[0].session;
+                const sampleCapture = cRows.find(r => r.capture) && cRows.find(r => r.capture).capture;
+                const modelCode = (sampleSession && sampleSession.deviceModel)
+                    || (sampleCapture && sampleCapture['deviceModel'])
+                    || (dId ? deviceModels[dId] : null);
+                const modelLabel = modelCode ? deviceName(modelCode) : '—';
+                const internalBadge = isInternal ? ' <span class="badge" style="background:#1a1a2a;color:#6b8bba">INTERNAL</span>' : '';
+
+                // Build the summary text
+                const newestTime = formatTime(new Date(newest.sortTs));
+                const spanLabel = spanMs > 0 ? formatDuration(spanMs) : '<1s';
+                const outcomeBits = [];
+                if (savedInCluster) outcomeBits.push(`<span style="color:#6bba6b">${savedInCluster} saved</span>`);
+                if (abandonedInCluster) outcomeBits.push(`<span style="color:#ba6b6b">${abandonedInCluster} abandoned</span>`);
+                if (captureOnly) outcomeBits.push(`${captureOnly} capture${captureOnly === 1 ? '' : 's'}`);
+                const stepBit = dominantStep
+                    ? ` · mostly <em style="font-style:normal;color:#bbb">${stepLabels[dominantStep] || dominantStep}</em>`
+                    : '';
+
+                const opacity = isInternal ? 'opacity:0.5;' : '';
+
+                html += `<tr class="cluster-header" data-cluster-id="${clusterId}" onclick="toggleCluster('${clusterId}', this)" style="${opacity}">
+                    <td colspan="10">
+                        <span class="cluster-arrow">▶</span>
+                        <strong style="color:#ccc">${cRows.length} sessions</strong> in a burst${internalBadge}
+                        <span style="color:#666"> · ${newestTime} · span ${spanLabel} · ${modelLabel}</span>
+                        <span style="color:#666"> · ${outcomeBits.join(' · ') || '—'}${stepBit}</span>
+                    </td>
+                </tr>`;
+
+                cRows.forEach(r => {
+                    html += renderRow(r, `cluster-row ${clusterId}`);
+                });
             });
 
             html += '</tbody></table></div>';
@@ -1175,6 +1287,18 @@
 
         function deviceName(model) {
             return DEVICE_NAMES[model] || model;
+        }
+
+        // Toggle a burst cluster open/closed in the Capture Timeline. Bound
+        // inline via onclick on the header row; rows belonging to a cluster
+        // share a class equal to its id.
+        function toggleCluster(clusterId, headerEl) {
+            const rows = document.querySelectorAll('tr.cluster-row.' + clusterId);
+            if (!rows.length) return;
+            const isOpen = rows[0].style.display !== 'none';
+            rows.forEach(r => { r.style.display = isOpen ? 'none' : 'table-row'; });
+            const arrow = headerEl && headerEl.querySelector('.cluster-arrow');
+            if (arrow) arrow.textContent = isOpen ? '▶' : '▼';
         }
 
         // Wire up "Show internal" toggle. Flip state, persist, and re-render
