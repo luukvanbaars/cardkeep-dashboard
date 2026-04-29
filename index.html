@@ -788,14 +788,48 @@
             // timezone = IANA identifier. Only renders if at least one row
             // carries either field, so old data without location columns
             // doesn't cause an empty card.
+            //
+            // Pulls from BOTH the Captures sheet AND FunnelSteps so the card
+            // populates as soon as any user fires any analytics event — not
+            // only when they finish a save. Aggregates per distinct deviceId
+            // so a heavy user firing many events doesn't dominate the chart;
+            // the count next to each country is "distinct devices in this
+            // region", which matches how a small tester pool actually thinks
+            // about reach.
+            const deviceLocation = new Map(); // deviceId → { country, timezone }
+            const captureLocation = (d) => {
+                const id = d['deviceId'];
+                if (!id) return;
+                const cur = deviceLocation.get(id) || {};
+                if (d['country'] && !cur.country) cur.country = d['country'];
+                if (d['timezone'] && !cur.timezone) cur.timezone = d['timezone'];
+                deviceLocation.set(id, cur);
+            };
+            // From Captures (already filtered for internal devices via `data`)
+            data.forEach(captureLocation);
+            // From FunnelSteps (raw rows-of-rows; parse + filter inline)
+            if (funnelRows && funnelRows.length > 1) {
+                const fHeader = funnelRows[0];
+                const idCol = fHeader.indexOf('deviceId');
+                const cCol  = fHeader.indexOf('country');
+                const tzCol = fHeader.indexOf('timezone');
+                for (let i = 1; i < funnelRows.length; i++) {
+                    const r = funnelRows[i];
+                    const id = idCol >= 0 ? r[idCol] : null;
+                    if (!id) continue;
+                    if (!showInternal && INTERNAL_DEVICES.has(id)) continue;
+                    const cur = deviceLocation.get(id) || {};
+                    if (cCol  >= 0 && r[cCol]  && !cur.country)  cur.country  = r[cCol];
+                    if (tzCol >= 0 && r[tzCol] && !cur.timezone) cur.timezone = r[tzCol];
+                    deviceLocation.set(id, cur);
+                }
+            }
             const countries = {};
             const timezones = {};
-            data.forEach(d => {
-                const c = d['country'];
-                const tz = d['timezone'];
-                if (c) countries[c] = (countries[c] || 0) + 1;
-                if (tz) timezones[tz] = (timezones[tz] || 0) + 1;
-            });
+            for (const loc of deviceLocation.values()) {
+                if (loc.country)  countries[loc.country]   = (countries[loc.country]   || 0) + 1;
+                if (loc.timezone) timezones[loc.timezone]  = (timezones[loc.timezone] || 0) + 1;
+            }
             const hasLocation = Object.keys(countries).length || Object.keys(timezones).length;
             if (hasLocation) {
                 html += '<div class="chart-card">';
